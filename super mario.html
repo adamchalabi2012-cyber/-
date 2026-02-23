@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Super Mario Shield - Responsive</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background: #222;
+    color: white;
+    font-family: 'Press Start 2P', cursive;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh; /* ملء الشاشة بالكامل */
+    width: 100vw;
+    overflow: hidden; /* منع التمرير */
+  }
+  
+  h1 { 
+    font-size: 1.5vw; /* حجم الخط يتغير مع الشاشة */
+    color: #f1c40f; 
+    margin: 10px 0; 
+    text-shadow: 2px 2px #c0392b; 
+    text-align: center;
+  }
+
+  .controls { 
+    margin-bottom: 10px; 
+    display: flex;
+    gap: 10px;
+  }
+  
+  button {
+    padding: 8px 16px;
+    font-family: inherit;
+    font-size: 10px;
+    border: 2px solid #fff;
+    cursor: pointer;
+    text-transform: uppercase;
+    transition: 0.2s;
+  }
+  
+  #restart { background: #e74c3c; color: white; box-shadow: 0 4px 0 #c0392b; }
+  #restart:active { transform: translateY(4px); box-shadow: none; }
+  
+  #pause { background: #3498db; color: white; box-shadow: 0 4px 0 #2980b9; }
+  #pause:active { transform: translateY(4px); box-shadow: none; }
+
+  /* هنا السحر لجعل الشاشة تظهر جيدا */
+  canvas {
+    background: linear-gradient(to bottom, #87CEEB 0%, #E0F7FA 100%);
+    border: 4px solid #fff;
+    box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    
+    /* جعل اللعبة تتجاوب مع الشاشة */
+    width: 95%;        /* تأخذ 95% من عرض الشاشة */
+    max-width: 800px;  /* لكن لا تزيد عن 800 بكسل */
+    height: auto;      /* الارتفاع يتعدل تلقائيا للحفاظ على النسبة */
+    aspect-ratio: 2 / 1; /* الحفاظ على نسبة العرض للارتفاع */
+    display: block;
+  }
+
+  /* تحسين للموبايل */
+  @media (max-width: 600px) {
+    h1 { font-size: 12px; }
+    .controls { margin-bottom: 5px; }
+  }
+</style>
+</head>
+
+<body>
+
+<h1>MARIO SHIELD</h1>
+
+<div class="controls">
+  <button id="restart">Restart</button>
+  <button id="pause">Pause</button>
+</div>
+
+<canvas id="game" width="800" height="400" tabindex="1"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+// التركيز على اللعبة عند الضغط عليها لكي تعمل المفاتيح
+canvas.addEventListener('click', () => canvas.focus());
+canvas.focus();
+
+// الصور والصوت
+const marioImg = new Image();
+marioImg.src = "https://i.imgur.com/QZ6Y9Yc.png";
+
+const sounds = {
+  jump: new Audio("https://cdn.pixabay.com/download/audio/2022/03/15/audio_4a3a3bdbb1.mp3"),
+  coin: new Audio("https://cdn.pixabay.com/download/audio/2022/03/15/audio_61c1a3f09f.mp3"),
+  lose: new Audio("https://cdn.pixabay.com/download/audio/2022/03/15/audio_6b7a01c9d8.mp3"),
+  powerup: new Audio("https://cdn.pixabay.com/download/audio/2022/03/10/audio_c8c8a73467.mp3")
+};
+
+// إعدادات اللعبة
+let gameState = "START"; 
+let gravity = 0.6;
+let scrollSpeed = 4;
+let score = 0;
+let shieldsCollected = 0;
+let enemiesKilled = 0;
+let frameCount = 0;
+
+let player = {};
+let platforms = [];
+let coins = [];
+let enemies = [];
+let items = []; 
+let particles = []; 
+
+let keys = {};
+
+// التحكم (لوحة المفاتيح)
+document.addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if (e.code === "Space") handleInput();
+});
+document.addEventListener("keyup", e => keys[e.code] = false);
+
+// التحكم (للموبايل - اللمس)
+canvas.addEventListener("touchstart", (e) => {
+    e.preventDefault(); // منع التمرير
+    handleInput();
+    keys["ArrowRight"] = true; // تحرك تلقائي لليمين عند اللمس
+});
+canvas.addEventListener("touchend", (e) => {
+    e.preventDefault();
+    keys["ArrowRight"] = false;
+});
+
+document.getElementById("restart").onclick = () => initGame();
+document.getElementById("pause").onclick = () => {
+  if (gameState === "PLAYING") gameState = "PAUSED";
+  else if (gameState === "PAUSED") gameState = "PLAYING";
+  canvas.focus();
+};
+
+function handleInput() {
+  if (gameState === "START" || gameState === "GAMEOVER") {
+    initGame();
+  } else if (gameState === "PLAYING" && player.onGround) {
+    player.vy = -12;
+    player.onGround = false;
+    playSound(sounds.jump);
+    createParticles(player.x + 20, player.y + 40, "#fff", 5);
+  }
+}
+
+function playSound(sound) {
+  let s = sound.cloneNode();
+  s.volume = 0.3;
+  s.play().catch(e => console.log("Sound blocked until interaction"));
+}
+
+function initGame() {
+  score = 0;
+  shieldsCollected = 0;
+  enemiesKilled = 0;
+  frameCount = 0;
+  gameState = "PLAYING";
+  particles = [];
+  
+  player = { x: 100, y: 200, w: 40, h: 50, vy: 0, onGround: false, shieldTime: 0 };
+  
+  platforms = [];
+  coins = [];
+  enemies = [];
+  items = [];
+
+  for(let i=0; i<5; i++) createPlatform(i * 250 + 50);
+}
+
+function createPlatform(x) {
+  let y = 250 + Math.random() * 100;
+  y = Math.min(Math.max(y, 200), 350);
+  platforms.push({ x, y, w: 140, h: 20 });
+
+  if (Math.random() < 0.7) {
+    coins.push({ x: x + 60, y: y - 40, collected: false, floatOffset: Math.random() * Math.PI });
+  }
+
+  if (Math.random() < 0.2) {
+    items.push({ x: x + 20, y: y - 40, type: "shield", active: true });
+  } else if (Math.random() < 0.2) {
+    items.push({ x: x + 100, y: y - 40, type: "box", active: true });
+  }
+}
+
+function createParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    particles.push({
+      x: x, y: y,
+      vx: (Math.random() - 0.5) * 10,
+      vy: (Math.random() - 0.5) * 10,
+      life: 30,
+      color: color
+    });
+  }
+}
+
+function update() {
+  if (gameState !== "PLAYING") return;
+
+  frameCount++;
+  if(frameCount % 600 === 0) scrollSpeed += 0.2;
+
+  if (keys["ArrowRight"]) player.x += 4;
+  if (keys["ArrowLeft"]) player.x -= 4;
+  
+  if(player.x < 0) player.x = 0;
+  if(player.x > 760) player.x = 760;
+
+  player.vy += gravity;
+  player.y += player.vy;
+  player.onGround = false;
+
+  platforms.forEach(p => {
+    p.x -= scrollSpeed;
+    if (
+      player.x + player.w > p.x && 
+      player.x < p.x + p.w &&
+      player.y + player.h > p.y && 
+      player.y + player.h < p.y + player.vy + 5 
+    ) {
+      player.y = p.y - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    }
+  });
+
+  if (player.y > 450) gameOver();
+
+  coins.forEach(c => {
+    c.x -= scrollSpeed;
+    if (!c.collected && checkCollision(player, {x:c.x, y:c.y, w:20, h:20})) {
+      c.collected = true;
+      score += 10;
+      playSound(sounds.coin);
+      createParticles(c.x, c.y, "gold", 8);
+    }
+  });
+
+  items.forEach(i => {
+    i.x -= scrollSpeed;
+    if (i.active && checkCollision(player, {x:i.x, y:i.y, w:30, h:30})) {
+      i.active = false;
+      playSound(sounds.powerup);
+      if (i.type === "shield") {
+        player.shieldTime = 400;
+        shieldsCollected++;
+        createParticles(player.x, player.y, "cyan", 15);
+      } else {
+        score += 50;
+        createParticles(player.x, player.y, "orange", 15);
+      }
+    }
+  });
+
+  if (player.shieldTime > 0) player.shieldTime--;
+
+  if (frameCount % 180 === 0) {
+    enemies.push({ x: 850, y: 300, w: 30, h: 30, alive: true });
+  }
+
+  enemies.forEach(e => {
+    e.x -= (scrollSpeed + 2);
+    let onPlat = false;
+    platforms.forEach(p => {
+       if(e.x+e.w > p.x && e.x < p.x+p.w && e.y+e.h >= p.y && e.y+e.h <= p.y+10) {
+         e.y = p.y - e.h;
+         onPlat = true;
+       }
+    });
+    if(!onPlat && e.y < 400) e.y += 2;
+
+    if (e.alive && checkCollision(player, e)) {
+      if (player.vy > 0 && player.y + player.h < e.y + e.h / 2) {
+        e.alive = false;
+        enemiesKilled++;
+        player.vy = -8;
+        score += 20;
+        createParticles(e.x, e.y, "#8e44ad", 10);
+        playSound(sounds.lose);
+      } 
+      else if (player.shieldTime > 0) {
+        e.alive = false;
+        enemiesKilled++;
+        createParticles(e.x, e.y, "#8e44ad", 10);
+        playSound(sounds.lose);
+      } 
+      else {
+        gameOver();
+      }
+    }
+  });
+
+  if (platforms[0].x < -150) {
+    platforms.shift();
+    let lastX = platforms[platforms.length - 1].x;
+    createPlatform(lastX + 200 + Math.random() * 50);
+  }
+
+  particles.forEach((p, index) => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life--;
+    if (p.life <= 0) particles.splice(index, 1);
+  });
+}
+
+function checkCollision(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function gameOver() {
+  gameState = "GAMEOVER";
+  playSound(sounds.lose);
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "#5D4037";
+  ctx.strokeStyle = "#3E2723";
+  ctx.lineWidth = 3;
+  platforms.forEach(p => {
+    ctx.fillRect(p.x, p.y, p.w, p.h);
+    ctx.strokeRect(p.x, p.y, p.w, p.h);
+    ctx.fillStyle = "#76ff03";
+    ctx.fillRect(p.x, p.y, p.w, 5);
+    ctx.fillStyle = "#5D4037";
+  });
+
+  coins.forEach(c => {
+    if (!c.collected) {
+      let bounce = Math.sin(frameCount * 0.1 + c.floatOffset) * 5;
+      ctx.fillStyle = "gold";
+      ctx.beginPath();
+      ctx.arc(c.x + 10, c.y + 10 + bounce, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#F9A825";
+      ctx.font = "16px Arial";
+      ctx.fillText("$", c.x + 5, c.y + 16 + bounce);
+    }
+  });
+
+  enemies.forEach(e => {
+    if (e.alive) {
+      ctx.fillStyle = "#8e44ad";
+      ctx.fillRect(e.x, e.y, e.w, e.h);
+      ctx.fillStyle = "white";
+      ctx.fillRect(e.x + 5, e.y + 5, 8, 8);
+      ctx.fillRect(e.x + 18, e.y + 5, 8, 8);
+      ctx.fillStyle = "black";
+      ctx.fillRect(e.x + 7, e.y + 7, 3, 3);
+      ctx.fillRect(e.x + 20, e.y + 7, 3, 3);
+    }
+  });
+
+  items.forEach(i => {
+    if (i.active) {
+      ctx.fillStyle = i.type === "shield" ? "cyan" : "orange";
+      ctx.fillRect(i.x, i.y, 30, 30);
+      ctx.strokeStyle = "white";
+      ctx.strokeRect(i.x, i.y, 30, 30);
+      ctx.fillStyle = "black";
+      ctx.font = "20px Arial";
+      ctx.fillText("?", i.x + 8, i.y + 22);
+    }
+  });
+
+  if(gameState !== "GAMEOVER") {
+     ctx.drawImage(marioImg, player.x, player.y, player.w, player.h);
+  }
+
+  if (player.shieldTime > 0) {
+    ctx.strokeStyle = `rgba(0, 255, 255, ${Math.random() * 0.5 + 0.5})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(player.x + player.w / 2, player.y + player.h / 2, 40, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  particles.forEach(p => {
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y, 5, 5);
+  });
+
+  ctx.fillStyle = "white";
+  ctx.font = "14px 'Press Start 2P'";
+  ctx.fillText("SCORE: " + score, 20, 30);
+  ctx.fillText("SHIELDS: " + shieldsCollected, 20, 55);
+  
+  if (player.shieldTime > 0) {
+    ctx.fillStyle = "cyan";
+    ctx.fillRect(20, 70, player.shieldTime / 2, 10);
+    ctx.strokeStyle = "white";
+    ctx.strokeRect(20, 70, 200, 10);
+  }
+
+  if (gameState === "START") {
+    drawOverlay("MARIO SHIELD", "Press SPACE or TAP to Start");
+  } else if (gameState === "GAMEOVER") {
+    drawOverlay("GAME OVER", "Final Score: " + score);
+  } else if (gameState === "PAUSED") {
+    drawOverlay("PAUSED", "Tap to Resume");
+  }
+}
+
+function drawOverlay(title, subtitle) {
+  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  
+  ctx.fillStyle = "#f1c40f";
+  ctx.font = "40px 'Press Start 2P'";
+  ctx.textAlign = "center";
+  ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 20);
+  
+  ctx.fillStyle = "white";
+  ctx.font = "15px 'Press Start 2P'";
+  ctx.fillText(subtitle, canvas.width / 2, canvas.height / 2 + 30);
+  ctx.textAlign = "left";
+}
+
+loop();
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);  
+}
+</script>
+
+</body>
+</html>
